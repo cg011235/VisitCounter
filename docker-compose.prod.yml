@@ -1,0 +1,90 @@
+version: '3.9'
+
+services:
+  redis-master:
+    image: redis:latest
+    container_name: redis_master
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+      - ./config/redis-master.conf:/usr/local/etc/redis/redis.conf
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+    networks:
+      - internal
+
+  redis-slave:
+    image: redis:latest
+    container_name: redis_slave
+    depends_on:
+      - redis-master
+    volumes:
+      - redis-data:/data
+      - ./config/redis-slave.conf:/usr/local/etc/redis/redis.conf
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+    networks:
+      - internal
+
+  sentinel:
+    image: redis:latest
+    container_name: redis_sentinel
+    ports:
+      - "26379:26379"
+    depends_on:
+      - redis-master
+      - redis-slave
+    volumes:
+      - ./config/sentinel.conf:/usr/local/etc/redis/sentinel.conf
+    command: ["redis-server", "/usr/local/etc/redis/sentinel.conf", "--sentinel"]
+    networks:
+      - internal
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    depends_on:
+      - redis-master
+      - redis-slave
+      - sentinel
+    networks:
+      - internal
+    environment:
+      - REDIS_HOST=redis-master
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=bingo
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    deploy:
+      replicas: 3
+      update_config:
+        parallelism: 2
+        delay: 10s
+      restart_policy:
+        condition: on-failure
+
+  reverse_proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile.reverse_proxy
+    ports:
+      - "80:80"
+    networks:
+      - internal
+      - external
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+volumes:
+  redis-data:
+
+networks:
+  internal:
+  external:
+    external: true
